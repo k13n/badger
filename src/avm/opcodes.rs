@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 33] = [
+pub const OP_SPECS: [OpSpec; 38] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -134,6 +134,41 @@ pub const OP_SPECS: [OpSpec; 33] = [
         version: AvmVersion::V1,
         cost: 1,
         eval: op_btoi,
+    },
+    OpSpec {
+        opcode: 0x18,
+        name: "%",
+        version: AvmVersion::V1,
+        cost: 1,
+        eval: op_mod,
+    },
+    OpSpec {
+        opcode: 0x19,
+        name: "|",
+        version: AvmVersion::V1,
+        cost: 1,
+        eval: op_bit_or,
+    },
+    OpSpec {
+        opcode: 0x1a,
+        name: "&",
+        version: AvmVersion::V1,
+        cost: 1,
+        eval: op_bit_and,
+    },
+    OpSpec {
+        opcode: 0x1b,
+        name: "^",
+        version: AvmVersion::V1,
+        cost: 1,
+        eval: op_bit_xor,
+    },
+    OpSpec {
+        opcode: 0x1c,
+        name: "~",
+        version: AvmVersion::V1,
+        cost: 1,
+        eval: op_bit_not,
     },
     OpSpec {
         opcode: 0x20,
@@ -405,6 +440,45 @@ fn op_btoi(avm: &mut Avm) -> Result<(), AvmError> {
     }
 }
 
+fn op_mod(avm: &mut Avm) -> Result<(), AvmError> {
+    let rhs = avm.pop_uint64()?;
+    let lhs = avm.pop_uint64()?;
+    match lhs.checked_rem(rhs) {
+        Some(res) => {
+            avm.data_stack.push(res.into());
+            Ok(())
+        }
+        None => Err(AvmError::DivisionByZero),
+    }
+}
+
+fn op_bit_or(avm: &mut Avm) -> Result<(), AvmError> {
+    let rhs = avm.pop_uint64()?;
+    let lhs = avm.pop_uint64()?;
+    avm.data_stack.push((lhs | rhs).into());
+    Ok(())
+}
+
+fn op_bit_and(avm: &mut Avm) -> Result<(), AvmError> {
+    let rhs = avm.pop_uint64()?;
+    let lhs = avm.pop_uint64()?;
+    avm.data_stack.push((lhs & rhs).into());
+    Ok(())
+}
+
+fn op_bit_xor(avm: &mut Avm) -> Result<(), AvmError> {
+    let rhs = avm.pop_uint64()?;
+    let lhs = avm.pop_uint64()?;
+    avm.data_stack.push((lhs ^ rhs).into());
+    Ok(())
+}
+
+fn op_bit_not(avm: &mut Avm) -> Result<(), AvmError> {
+    let value = avm.pop_uint64()?;
+    avm.data_stack.push((!value).into());
+    Ok(())
+}
+
 fn op_intcblock(avm: &mut Avm) -> Result<(), AvmError> {
     let nintegers = avm.read_varint()?;
     avm.intc = vec![];
@@ -500,8 +574,7 @@ fn op_concat(avm: &mut Avm) -> Result<(), AvmError> {
     if lhs.len() + rhs.len() > 4096 {
         Err(AvmError::BytesTooLong)
     } else {
-        let concatentation = AvmData::Bytes([lhs, rhs].concat());
-        avm.data_stack.push(concatentation);
+        avm.data_stack.push([lhs, rhs].concat().into());
         Ok(())
     }
 }
@@ -611,7 +684,7 @@ mod tests {
     fn test_div_by_zero() -> Result<(), AvmError> {
         // #pragma version 9
         // pushint 10
-        // pushint 2
+        // pushint 0
         // /
         let program = vec![0x09, 0x81, 0x0a, 0x81, 0x00, 0x0a];
         let mut avm = Avm::for_program(&program)?;
@@ -1201,6 +1274,112 @@ mod tests {
         let mut avm = Avm::for_program(&program)?;
         let err = execute_program(&mut avm).unwrap_err();
         assert_eq!(AvmError::BtoiTooLong(9), err);
+        Ok(())
+    }
+
+    #[test]
+    fn test_mod() -> Result<(), AvmError> {
+        // #pragma version 9
+        // pushint 10
+        // pushint 4
+        // %
+        let program = vec![0x09, 0x81, 0x0a, 0x81, 0x04, 0x18];
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(2)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_mod_by_zero() -> Result<(), AvmError> {
+        // #pragma version 9
+        // pushint 10
+        // pushint 0
+        // /
+        let program = vec![0x09, 0x81, 0x0a, 0x81, 0x00, 0x18];
+        let mut avm = Avm::for_program(&program)?;
+
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::DivisionByZero, err);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bit_or() -> Result<(), AvmError> {
+        // #pragma version 9
+        // pushint 0b000000001000100110111101 (0xBD9302)
+        // pushint 0b110010011011101100100011 (0xA3F6A606)
+        // |
+        let program = vec![
+            0x09, 0x81, 0xBD, 0x93, 0x02, 0x81, 0xA3, 0xF6, 0xA6, 0x06, 0x19,
+        ];
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        // result:
+        // 0b110010011011101110111111
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(13220799)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_bit_and() -> Result<(), AvmError> {
+        // #pragma version 9
+        // pushint 0b000000001000100110111101 (0xBD9302)
+        // pushint 0b110010011011101100100011 (0xA3F6A606)
+        // &
+        let program = vec![
+            0x09, 0x81, 0xBD, 0x93, 0x02, 0x81, 0xA3, 0xF6, 0xA6, 0x06, 0x1a,
+        ];
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        // result:
+        // 0b1000100100100001
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(35105)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_bit_xor() -> Result<(), AvmError> {
+        // #pragma version 9
+        // pushint 0b000000001000100110111101 (0xBD9302)
+        // pushint 0b110010011011101100100011 (0xA3F6A606)
+        // ^
+        let program = vec![
+            0x09, 0x81, 0xBD, 0x93, 0x02, 0x81, 0xA3, 0xF6, 0xA6, 0x06, 0x1b,
+        ];
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        // result:
+        // 0b110010010011001010011110
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(13185694)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_bit_not() -> Result<(), AvmError> {
+        // #pragma version 9
+        // pushint 0b000000001000100110111101 (0xBD9302)
+        // !
+        let program = vec![0x09, 0x81, 0xBD, 0x93, 0x02, 0x1c];
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        // result:
+        // 0b1111111111111111111111111111111111111111111111110111011001000010
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(
+            Some(AvmData::Uint64(18446744073709516354)),
+            avm.data_stack.pop()
+        );
         Ok(())
     }
 }
