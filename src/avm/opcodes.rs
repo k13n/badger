@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 38] = [
+pub const OP_SPECS: [OpSpec; 42] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -253,6 +253,34 @@ pub const OP_SPECS: [OpSpec; 38] = [
         version: AvmVersion::V1,
         cost: 1,
         eval: op_bytec_3,
+    },
+    OpSpec {
+        opcode: 0x40,
+        name: "bnz",
+        version: AvmVersion::V1,
+        cost: 1,
+        eval: op_bnz,
+    },
+    OpSpec {
+        opcode: 0x41,
+        name: "bz",
+        version: AvmVersion::V2,
+        cost: 1,
+        eval: op_bz,
+    },
+    OpSpec {
+        opcode: 0x42,
+        name: "b",
+        version: AvmVersion::V2,
+        cost: 2,
+        eval: op_b,
+    },
+    OpSpec {
+        opcode: 0x43,
+        name: "return",
+        version: AvmVersion::V2,
+        cost: 2,
+        eval: op_return,
     },
     OpSpec {
         opcode: 0x48,
@@ -559,6 +587,49 @@ fn op_bytec_2(avm: &mut Avm) -> Result<(), AvmError> {
 
 fn op_bytec_3(avm: &mut Avm) -> Result<(), AvmError> {
     op_bytec_n(avm, 3)
+}
+
+fn op_bnz(avm: &mut Avm) -> Result<(), AvmError> {
+    // do not move read_i16 into if branch, it moves the program counter
+    let offset = avm.read_i16()?;
+    if avm.pop_uint64()? != 0 {
+        branch_to_offset(avm, offset)?;
+    }
+    Ok(())
+}
+
+fn op_bz(avm: &mut Avm) -> Result<(), AvmError> {
+    // do not move read_i16 into if branch, it moves the program counter
+    let offset = avm.read_i16()?;
+    if avm.pop_uint64()? == 0 {
+        branch_to_offset(avm, offset)?;
+    }
+    Ok(())
+}
+
+fn op_b(avm: &mut Avm) -> Result<(), AvmError> {
+    let offset = avm.read_i16()?;
+    branch_to_offset(avm, offset)
+}
+
+fn branch_to_offset(avm: &mut Avm, offset: i16) -> Result<(), AvmError> {
+    let target: i64 = avm.pc as i64 + (offset as i64);
+    if target < 0 || target > (avm.program.len() as i64) {
+        Err(AvmError::PcOutOfBounds)
+    } else {
+        // TODO: we also have to check that we are jumping
+        // to the beginning of an opcode
+        avm.pc = target as usize;
+        Ok(())
+    }
+}
+
+fn op_return(avm: &mut Avm) -> Result<(), AvmError> {
+    let value = avm.pop_uint64()?;
+    avm.data_stack.clear();
+    avm.data_stack.push(AvmData::Uint64(value));
+    avm.pc = avm.program.len();
+    Ok(())
 }
 
 fn op_pop(avm: &mut Avm) -> Result<(), AvmError> {
@@ -1380,6 +1451,87 @@ mod tests {
             Some(AvmData::Uint64(18446744073709516354)),
             avm.data_stack.pop()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_bz() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],             // #pragma version 10
+            vec![0x81, 0x03],       // pushint 3
+            vec![0x81, 0x02],       // pushint 2
+            vec![0x0c],             // <
+            vec![0x41, 0x00, 0x06], // bz 0x0006
+            vec![0x81, 0x01],       // pushint 1
+            vec![0x43],             // return
+            vec![0x42, 0x00, 0x03], // b 0x0003
+            vec![0x81, 0x00],       // pushint 0
+            vec![0x43],             // return
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(0)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_bnz() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],             // #pragma version 10
+            vec![0x81, 0x02],       // pushint 2
+            vec![0x81, 0x03],       // pushint 3
+            vec![0x0c],             // <
+            vec![0x40, 0x00, 0x06], // bnz 0x0006
+            vec![0x81, 0x00],       // pushint 0
+            vec![0x43],             // return
+            vec![0x42, 0x00, 0x03], // b 0x0003
+            vec![0x81, 0x01],       // pushint 1
+            vec![0x43],             // return
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_b() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],             // #pragma version 10
+            vec![0x42, 0x00, 0x04], // bnz 0x0004
+            vec![0x81, 0x01],       // pushint 1
+            vec![0x81, 0x02],       // pushint 2
+            vec![0x81, 0x01],       // pushint 1
+            vec![0x43],             // return
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_return() -> Result<(), AvmError> {
+        // #pragma version 10
+        // pushint 1
+        // pushint 2
+        // pushint 3
+        // return
+        let program = vec![0x09, 0x81, 0x01, 0x81, 0x02, 0x81, 0x03, 0x43];
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(3)), avm.data_stack.pop());
         Ok(())
     }
 }

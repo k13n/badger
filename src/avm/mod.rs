@@ -61,6 +61,16 @@ impl<'a> Avm<'a> {
         Ok(number)
     }
 
+    fn read_i16(&mut self) -> Result<i16, AvmError> {
+        if self.pc + 1 >= self.program.len() {
+            Err(AvmError::PcOutOfBounds)
+        } else {
+            let buffer: [u8; 2] = [self.program[self.pc], self.program[self.pc + 1]];
+            self.pc += 2;
+            Ok(i16::from_be_bytes(buffer))
+        }
+    }
+
     fn read_varbytes(&mut self) -> Result<VarBytes<'a>, AvmError> {
         let bytes: VarBytes = self.program[self.pc..].try_into()?;
         self.pc += bytes.nbytes;
