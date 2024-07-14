@@ -147,7 +147,7 @@ impl TryFrom<u8> for AvmVersion {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum AvmData {
     Bytes(Vec<u8>),
     Uint64(u64),

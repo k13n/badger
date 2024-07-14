@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 42] = [
+pub const OP_SPECS: [OpSpec; 44] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -288,6 +288,20 @@ pub const OP_SPECS: [OpSpec; 42] = [
         version: AvmVersion::V1,
         cost: 1,
         eval: op_pop,
+    },
+    OpSpec {
+        opcode: 0x49,
+        name: "dup",
+        version: AvmVersion::V1,
+        cost: 1,
+        eval: op_dup,
+    },
+    OpSpec {
+        opcode: 0x4a,
+        name: "dup2",
+        version: AvmVersion::V2,
+        cost: 1,
+        eval: op_dup2,
     },
     OpSpec {
         opcode: 0x50,
@@ -636,6 +650,31 @@ fn op_pop(avm: &mut Avm) -> Result<(), AvmError> {
     match avm.data_stack.pop() {
         Some(_) => Ok(()),
         None => Err(AvmError::EmptyStack),
+    }
+}
+
+fn op_dup(avm: &mut Avm) -> Result<(), AvmError> {
+    match avm.data_stack.last() {
+        None => Err(AvmError::StackUnderflow),
+        Some(v) => {
+            avm.data_stack.push(v.clone());
+            Ok(())
+        }
+    }
+}
+
+fn op_dup2(avm: &mut Avm) -> Result<(), AvmError> {
+    let b = avm.data_stack.pop();
+    let a = avm.data_stack.pop();
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            avm.data_stack.push(a.clone());
+            avm.data_stack.push(b.clone());
+            avm.data_stack.push(a);
+            avm.data_stack.push(b);
+            Ok(())
+        }
+        _ => Err(AvmError::StackUnderflow),
     }
 }
 
@@ -1526,12 +1565,68 @@ mod tests {
         // pushint 2
         // pushint 3
         // return
-        let program = vec![0x09, 0x81, 0x01, 0x81, 0x02, 0x81, 0x03, 0x43];
+        let program = vec![0x0a, 0x81, 0x01, 0x81, 0x02, 0x81, 0x03, 0x43];
         let mut avm = Avm::for_program(&program)?;
         let avm = execute_program(&mut avm)?;
 
         assert_eq!(1, avm.data_stack.len());
         assert_eq!(Some(AvmData::Uint64(3)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_dup() -> Result<(), AvmError> {
+        // #pragma version 10
+        // pushint 1
+        // dup
+        let program = vec![0x0a, 0x81, 0x01, 0x49];
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(2, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_dup_on_empty_stack() -> Result<(), AvmError> {
+        // #pragma version 10
+        // dup
+        let program = vec![0x0a, 0x49];
+        let mut avm = Avm::for_program(&program)?;
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::StackUnderflow, err);
+        Ok(())
+    }
+
+    #[test]
+    fn test_dup2() -> Result<(), AvmError> {
+        // #pragma version 10
+        // pushint 1
+        // pushbytes 0xde
+        // dup2
+        let program = vec![0x0a, 0x81, 0x01, 0x80, 0x01, 0xde, 0x4a];
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(4, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Bytes(vec![0xde])), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Bytes(vec![0xde])), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_dup2_on_too_short_stack() -> Result<(), AvmError> {
+        // #pragma version 10
+        // pushbytes 0xde
+        // dup2
+        let program = vec![0x0a, 0x80, 0x01, 0xde, 0x4a];
+        let mut avm = Avm::for_program(&program)?;
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::StackUnderflow, err);
         Ok(())
     }
 }
