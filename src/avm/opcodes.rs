@@ -1629,4 +1629,25 @@ mod tests {
         assert_eq!(AvmError::StackUnderflow, err);
         Ok(())
     }
+
+    #[test]
+    fn test_loop_with_bnz() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],             // #pragma version 10
+            vec![0x81, 0x00],       // pushint 0
+            vec![0x81, 0x01],       // pushint 1
+            vec![0x08],             // +
+            vec![0x49],             // dup
+            vec![0x81, 0x05],       // pushint 5
+            vec![0x0c],             // <
+            vec![0x40, 0xff, 0xf6], // bnz 0xfff6 (-10 in two's complement)
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(5)), avm.data_stack.pop());
+        Ok(())
+    }
 }
