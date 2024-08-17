@@ -1,6 +1,17 @@
 use crate::AvmError;
 use std::cmp::min;
 
+pub fn u128_to_u64_tuple(value: u128) -> (u64, u64) {
+    const MASK: u128 = 0x0000_0000_0000_0000_ffff_ffff_ffff_ffff;
+    let hi = (value >> 64) as u64;
+    let lo = (value & MASK) as u64;
+    (hi, lo)
+}
+
+pub fn u64_tuple_to_u128(hi: u64, lo: u64) -> u128 {
+    ((hi as u128) << 64) | (lo as u128)
+}
+
 #[derive(Debug, PartialEq)]
 pub struct VarUint64 {
     pub value: u64,

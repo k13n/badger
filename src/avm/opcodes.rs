@@ -1,5 +1,5 @@
 use crate::{
-    encoding::{VarBytes, VarUint64},
+    encoding::{self, VarBytes, VarUint64},
     AvmError,
 };
 
@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 44] = [
+pub const OP_SPECS: [OpSpec; 47] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -169,6 +169,27 @@ pub const OP_SPECS: [OpSpec; 44] = [
         version: AvmVersion::V1,
         cost: 1,
         eval: op_bit_not,
+    },
+    OpSpec {
+        opcode: 0x1d,
+        name: "mulw",
+        version: AvmVersion::V1,
+        cost: 1,
+        eval: op_mulw,
+    },
+    OpSpec {
+        opcode: 0x1e,
+        name: "addw",
+        version: AvmVersion::V2,
+        cost: 1,
+        eval: op_addw,
+    },
+    OpSpec {
+        opcode: 0x1f,
+        name: "divmodw",
+        version: AvmVersion::V4,
+        cost: 20,
+        eval: op_divmodw,
     },
     OpSpec {
         opcode: 0x20,
@@ -518,6 +539,46 @@ fn op_bit_xor(avm: &mut Avm) -> Result<(), AvmError> {
 fn op_bit_not(avm: &mut Avm) -> Result<(), AvmError> {
     let value = avm.pop_uint64()?;
     avm.data_stack.push((!value).into());
+    Ok(())
+}
+
+fn op_mulw(avm: &mut Avm) -> Result<(), AvmError> {
+    let b = avm.pop_uint64()?;
+    let a = avm.pop_uint64()?;
+    let (hi, lo) = encoding::u128_to_u64_tuple((a as u128) * (b as u128));
+    avm.data_stack.push(hi.into());
+    avm.data_stack.push(lo.into());
+    Ok(())
+}
+
+fn op_addw(avm: &mut Avm) -> Result<(), AvmError> {
+    let b = avm.pop_uint64()?;
+    let a = avm.pop_uint64()?;
+    let (hi, lo) = encoding::u128_to_u64_tuple((a as u128) + (b as u128));
+    avm.data_stack.push(hi.into());
+    avm.data_stack.push(lo.into());
+    Ok(())
+}
+
+fn op_divmodw(avm: &mut Avm) -> Result<(), AvmError> {
+    let d = avm.pop_uint64()?;
+    let c = avm.pop_uint64()?;
+    let b = avm.pop_uint64()?;
+    let a = avm.pop_uint64()?;
+    // compute a||b and c||d (bytewise-concatenation)
+    let ab = encoding::u64_tuple_to_u128(a, b);
+    let cd = encoding::u64_tuple_to_u128(c, d);
+    // compute result (division, modulo)
+    let wx = ab / cd;
+    let yz = ab % cd;
+    // split u128s into u64s
+    let (w, x) = encoding::u128_to_u64_tuple(wx);
+    let (y, z) = encoding::u128_to_u64_tuple(yz);
+    // put results onto stack
+    avm.data_stack.push(w.into());
+    avm.data_stack.push(x.into());
+    avm.data_stack.push(y.into());
+    avm.data_stack.push(z.into());
     Ok(())
 }
 
@@ -1488,6 +1549,119 @@ mod tests {
         assert_eq!(1, avm.data_stack.len());
         assert_eq!(
             Some(AvmData::Uint64(18446744073709516354)),
+            avm.data_stack.pop()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_mulw() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a], // #pragma version 10
+            vec![
+                0x81, 0xb4, 0xce, 0xb6, 0xf4, 0x81, 0xe3, 0xca, 0xff, 0xff, 0x01,
+            ], // pushint 18446509981324650292
+            vec![
+                0x81, 0xa4, 0xca, 0xc4, 0x90, 0xee, 0xe2, 0xd8, 0xfd, 0xff, 0x01,
+            ], // pushint 18445445648759203108
+            vec![0x1d], // mulw
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        // the result (in hex 0xfffa8e32d6bd7f742c811b4ac78a0750)
+        // is pushed onto the stack as two 64-bit values
+        assert_eq!(2, avm.data_stack.len());
+        assert_eq!(
+            // low
+            Some(AvmData::Uint64(0x2c811b4ac78a0750)),
+            avm.data_stack.pop()
+        );
+        assert_eq!(
+            // high
+            Some(AvmData::Uint64(0xfffa8e32d6bd7f74)),
+            avm.data_stack.pop()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_addw() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a], // #pragma version 10
+            vec![
+                0x81, 0xb4, 0xce, 0xb6, 0xf4, 0x81, 0xe3, 0xca, 0xff, 0xff, 0x01,
+            ], // pushint 18446509981324650292
+            vec![
+                0x81, 0xa4, 0xca, 0xc4, 0x90, 0xee, 0xe2, 0xd8, 0xfd, 0xff, 0x01,
+            ], // pushint 18445445648759203108
+            vec![0x1e], // addw
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        // the result (in hex 0x0000000000000001fffa8e2f009ecc58)
+        // is pushed onto the stack as two 64-bit values
+        assert_eq!(2, avm.data_stack.len());
+        assert_eq!(
+            // low
+            Some(AvmData::Uint64(0xfffa8e2f009ecc58)),
+            avm.data_stack.pop()
+        );
+        assert_eq!(
+            // high
+            Some(AvmData::Uint64(0x0000000000000001)),
+            avm.data_stack.pop()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_divmodw() -> Result<(), AvmError> {
+        // ab = 0xfffa8e32d6bd7f742c811b4ac78a0750
+        // cd = 0x00000000002ccd18797b150ba583e510
+        //  a = 0xfffa8e32d6bd7f74 as varint: f4fef5b5adc6a3fdff01
+        //  b = 0x2c811b4ac78a0750 as varint: d08ea8bcace9c6c02c
+        //  c = 0x00000000002ccd18 as varint: 989ab301
+        //  d = 0x797b150ba583e510 as varint: 90ca8facbaa1c5bd79
+        let program = [
+            vec![0x0a], // #pragma version 10
+            vec![
+                0x81, 0xf4, 0xfe, 0xf5, 0xb5, 0xad, 0xc6, 0xa3, 0xfd, 0xff, 0x01,
+            ], // pushint a
+            vec![0x81, 0xd0, 0x8e, 0xa8, 0xbc, 0xac, 0xe9, 0xc6, 0xc0, 0x2c], // pushint b
+            vec![0x81, 0x98, 0x9a, 0xb3, 0x01], // pushint c
+            vec![0x81, 0x90, 0xca, 0x8f, 0xac, 0xba, 0xa1, 0xc5, 0xbd, 0x79], // pushint d
+            vec![0x1f], // divmodw
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        // the result are two u128s (split into four u64s):
+        // result of division: 0x0000000000000000000005b6b2aa6607 = 6282239698439
+        // result of modulo:   0x000000000029b2807db11bcb770a63e0 = 50408910078442914141856736
+        assert_eq!(4, avm.data_stack.len());
+        assert_eq!(
+            // modulo low
+            Some(AvmData::Uint64(0x7db11bcb770a63e0)),
+            avm.data_stack.pop()
+        );
+        assert_eq!(
+            // modulo high
+            Some(AvmData::Uint64(0x000000000029b280)),
+            avm.data_stack.pop()
+        );
+        assert_eq!(
+            // division low
+            Some(AvmData::Uint64(0x000005b6b2aa6607)),
+            avm.data_stack.pop()
+        );
+        assert_eq!(
+            // division high
+            Some(AvmData::Uint64(0x0000000000000000)),
             avm.data_stack.pop()
         );
         Ok(())
