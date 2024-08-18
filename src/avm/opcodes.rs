@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 51] = [
+pub const OP_SPECS: [OpSpec; 52] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -321,15 +321,22 @@ pub const OP_SPECS: [OpSpec; 51] = [
         opcode: 0x42,
         name: "b",
         version: AvmVersion::V2,
-        cost: 2,
+        cost: 1,
         eval: op_b,
     },
     OpSpec {
         opcode: 0x43,
         name: "return",
         version: AvmVersion::V2,
-        cost: 2,
+        cost: 1,
         eval: op_return,
+    },
+    OpSpec {
+        opcode: 0x44,
+        name: "assert",
+        version: AvmVersion::V3,
+        cost: 1,
+        eval: op_assert,
     },
     OpSpec {
         opcode: 0x48,
@@ -768,6 +775,14 @@ fn op_return(avm: &mut Avm) -> Result<(), AvmError> {
     avm.data_stack.push(AvmData::Uint64(value));
     avm.pc = avm.program.len();
     Ok(())
+}
+
+fn op_assert(avm: &mut Avm) -> Result<(), AvmError> {
+    if avm.pop_uint64()? == 0 {
+        Err(AvmError::AssertionFailed(avm.pc - 1))
+    } else {
+        Ok(())
+    }
 }
 
 fn op_pop(avm: &mut Avm) -> Result<(), AvmError> {
@@ -1945,6 +1960,35 @@ mod tests {
 
         assert_eq!(1, avm.data_stack.len());
         assert_eq!(Some(AvmData::Uint64(3)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_assert() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x05], // pushint 5
+            vec![0x44],       // assert
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(0, avm.data_stack.len());
+        Ok(())
+    }
+
+    #[test]
+    fn test_assert_negative() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x00], // pushint 0
+            vec![0x44],       // assert
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::AssertionFailed(3), err);
         Ok(())
     }
 

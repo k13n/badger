@@ -39,4 +39,6 @@ pub enum AvmError {
     BtoiTooLong(usize),
     #[error("Scratch position {0} out of bounds")]
     ScratchAccessOutOfBounds(usize),
+    #[error("Assertion failed at program counter {0}")]
+    AssertionFailed(usize),
 }
