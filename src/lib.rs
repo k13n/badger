@@ -37,4 +37,6 @@ pub enum AvmError {
     BytecOutOfRange(usize, usize),
     #[error("Byte slice (length {0}) too long for btoi conversion")]
     BtoiTooLong(usize),
+    #[error("Scratch position {0} out of bounds")]
+    ScratchAccessOutOfBounds(usize),
 }

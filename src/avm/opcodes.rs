@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 49] = [
+pub const OP_SPECS: [OpSpec; 51] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -288,6 +288,20 @@ pub const OP_SPECS: [OpSpec; 49] = [
         version: AvmVersion::V1,
         cost: 1,
         eval: op_store,
+    },
+    OpSpec {
+        opcode: 0x3e,
+        name: "loads",
+        version: AvmVersion::V5,
+        cost: 1,
+        eval: op_loads,
+    },
+    OpSpec {
+        opcode: 0x3f,
+        name: "stores",
+        version: AvmVersion::V5,
+        cost: 1,
+        eval: op_stores,
     },
     OpSpec {
         opcode: 0x40,
@@ -694,6 +708,25 @@ fn op_store(avm: &mut Avm) -> Result<(), AvmError> {
     Ok(())
 }
 
+fn op_loads(avm: &mut Avm) -> Result<(), AvmError> {
+    let pos = avm.pop_uint64()? as usize;
+    if pos >= avm.scratch.len() {
+        return Err(AvmError::ScratchAccessOutOfBounds(pos));
+    }
+    avm.data_stack.push(avm.scratch[pos].clone());
+    Ok(())
+}
+
+fn op_stores(avm: &mut Avm) -> Result<(), AvmError> {
+    let value = avm.pop_any()?;
+    let pos = avm.pop_uint64()? as usize;
+    if pos >= avm.scratch.len() {
+        return Err(AvmError::ScratchAccessOutOfBounds(pos));
+    }
+    avm.scratch[pos] = value;
+    Ok(())
+}
+
 fn op_bnz(avm: &mut Avm) -> Result<(), AvmError> {
     // do not move read_i16 into if branch, it moves the program counter
     let offset = avm.read_i16()?;
@@ -794,6 +827,8 @@ fn op_pushint(avm: &mut Avm) -> Result<(), AvmError> {
 
 #[cfg(test)]
 mod tests {
+    use std::vec;
+
     use crate::avm::execute_program;
 
     use super::*;
@@ -1758,6 +1793,77 @@ mod tests {
             Some(AvmData::Bytes(vec![0xde, 0xad, 0xbe, 0xef])),
             avm.data_stack.pop()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_loads() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],                               // #pragma version 10
+            vec![0x80, 0x04, 0xde, 0xad, 0xbe, 0xef], // pushbytes 0xdeadbeef
+            vec![0x35, 0x09],                         // store 9
+            vec![0x81, 0x09],                         // pushint 9
+            vec![0x3e],                               // loads
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(
+            Some(AvmData::Bytes(vec![0xde, 0xad, 0xbe, 0xef])),
+            avm.data_stack.pop()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_loads_out_of_bounds() -> Result<(), AvmError> {
+        // index 256 is the first position that is no longer
+        // within the scratch space's bounds
+        let program = [
+            vec![0x0a],             // #pragma version 10
+            vec![0x81, 0x80, 0x02], // pushint 256
+            vec![0x3e],             // loads
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::ScratchAccessOutOfBounds(256), err);
+        Ok(())
+    }
+
+    #[test]
+    fn test_stores() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],                               // #pragma version 10
+            vec![0x81, 0x05],                         // pushint 5
+            vec![0x80, 0x04, 0xde, 0xad, 0xbe, 0xef], // pushbytes 0xdeadbeef
+            vec![0x3f],                               // stores
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(0, avm.data_stack.len());
+        assert_eq!(AvmData::Bytes(vec![0xde, 0xad, 0xbe, 0xef]), avm.scratch[5]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_stores_out_of_bounds() -> Result<(), AvmError> {
+        // index 256 is the first position that is no longer
+        // within the scratch space's bounds
+        let program = [
+            vec![0x0a],                               // #pragma version 10
+            vec![0x81, 0x80, 0x02],                   // pushint 256
+            vec![0x80, 0x04, 0xde, 0xad, 0xbe, 0xef], // pushbytes 0xdeadbeef
+            vec![0x3f],                               // stores
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::ScratchAccessOutOfBounds(256), err);
         Ok(())
     }
 
