@@ -21,6 +21,7 @@ pub struct Avm<'a> {
     pub version: AvmVersion,
     pub intc: Vec<u64>,
     pub bytec: Vec<&'a [u8]>,
+    pub scratch: Vec<AvmData>,
 }
 
 impl<'a> Avm<'a> {
@@ -35,6 +36,8 @@ impl<'a> Avm<'a> {
         let version = AvmVersion::try_from(program[pc])?;
         pc += 1;
 
+        let scratch = vec![AvmData::Uint64(0); 256];
+
         Ok(Avm {
             data_stack: vec![],
             program,
@@ -42,6 +45,7 @@ impl<'a> Avm<'a> {
             version,
             intc: vec![],
             bytec: vec![],
+            scratch,
         })
     }
 
@@ -75,6 +79,13 @@ impl<'a> Avm<'a> {
         let bytes: VarBytes = self.program[self.pc..].try_into()?;
         self.pc += bytes.nbytes;
         Ok(bytes)
+    }
+
+    fn pop_any(&mut self) -> Result<AvmData, AvmError> {
+        match self.data_stack.pop() {
+            Some(v) => Ok(v),
+            None => Err(AvmError::StackUnderflow),
+        }
     }
 
     fn pop_uint64(&mut self) -> Result<u64, AvmError> {

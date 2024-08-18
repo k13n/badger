@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 47] = [
+pub const OP_SPECS: [OpSpec; 49] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -274,6 +274,20 @@ pub const OP_SPECS: [OpSpec; 47] = [
         version: AvmVersion::V1,
         cost: 1,
         eval: op_bytec_3,
+    },
+    OpSpec {
+        opcode: 0x34,
+        name: "load",
+        version: AvmVersion::V1,
+        cost: 1,
+        eval: op_load,
+    },
+    OpSpec {
+        opcode: 0x35,
+        name: "store",
+        version: AvmVersion::V1,
+        cost: 1,
+        eval: op_store,
     },
     OpSpec {
         opcode: 0x40,
@@ -662,6 +676,22 @@ fn op_bytec_2(avm: &mut Avm) -> Result<(), AvmError> {
 
 fn op_bytec_3(avm: &mut Avm) -> Result<(), AvmError> {
     op_bytec_n(avm, 3)
+}
+
+fn op_load(avm: &mut Avm) -> Result<(), AvmError> {
+    // we do not need range checking since scratch has length 256
+    // and is indexed by a single byte
+    let pos = avm.read_byte()? as usize;
+    avm.data_stack.push(avm.scratch[pos].clone());
+    Ok(())
+}
+
+fn op_store(avm: &mut Avm) -> Result<(), AvmError> {
+    // we do not need range checking since scratch has length 256
+    // and is indexed by a single byte
+    let pos = avm.read_byte()? as usize;
+    avm.scratch[pos] = avm.pop_any()?;
+    Ok(())
 }
 
 fn op_bnz(avm: &mut Avm) -> Result<(), AvmError> {
@@ -1662,6 +1692,70 @@ mod tests {
         assert_eq!(
             // division high
             Some(AvmData::Uint64(0x0000000000000000)),
+            avm.data_stack.pop()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_store() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x05], // pushint 5
+            vec![0x35, 0x02], // store 2
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(0, avm.data_stack.len());
+        assert_eq!(AvmData::Uint64(5), avm.scratch[2]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_unset_location() -> Result<(), AvmError> {
+        // since position 2 wasn't written before, it is the
+        // default value: 0 as uint64
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x34, 0x02], // load 2
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(0)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_store_and_load() -> Result<(), AvmError> {
+        // since position 2 wasn't written before, it is the
+        // default value: 0 as uint64
+        let program = [
+            vec![0x0a],                               // #pragma version 10
+            vec![0x81, 0x01],                         // pushint 1
+            vec![0x80, 0x04, 0xde, 0xad, 0xbe, 0xef], // pushbytes 0xdeadbeef
+            vec![0x35, 0x05],                         // store 5
+            vec![0x35, 0x03],                         // store 3
+            vec![0x34, 0x05],                         // load 5
+            vec![0x34, 0x03],                         // load 3
+            vec![0x34, 0x05],                         // load 5
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(3, avm.data_stack.len());
+        assert_eq!(
+            Some(AvmData::Bytes(vec![0xde, 0xad, 0xbe, 0xef])),
+            avm.data_stack.pop()
+        );
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        assert_eq!(
+            Some(AvmData::Bytes(vec![0xde, 0xad, 0xbe, 0xef])),
             avm.data_stack.pop()
         );
         Ok(())
