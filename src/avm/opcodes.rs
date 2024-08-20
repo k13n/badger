@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 52] = [
+pub const OP_SPECS: [OpSpec; 53] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -337,6 +337,13 @@ pub const OP_SPECS: [OpSpec; 52] = [
         version: AvmVersion::V3,
         cost: 1,
         eval: op_assert,
+    },
+    OpSpec {
+        opcode: 0x45,
+        name: "bury",
+        version: AvmVersion::V8,
+        cost: 1,
+        eval: op_bury,
     },
     OpSpec {
         opcode: 0x48,
@@ -783,6 +790,16 @@ fn op_assert(avm: &mut Avm) -> Result<(), AvmError> {
     } else {
         Ok(())
     }
+}
+
+fn op_bury(avm: &mut Avm) -> Result<(), AvmError> {
+    let len = avm.data_stack.len();
+    let offset = avm.read_byte()? as usize;
+    if offset > len || offset == 0 {
+        return Err(AvmError::InvalidStackAccess());
+    }
+    avm.data_stack[len - offset] = avm.pop_any()?;
+    Ok(())
 }
 
 fn op_pop(avm: &mut Avm) -> Result<(), AvmError> {
@@ -1989,6 +2006,59 @@ mod tests {
         let mut avm = Avm::for_program(&program)?;
         let err = execute_program(&mut avm).unwrap_err();
         assert_eq!(AvmError::AssertionFailed(3), err);
+        Ok(())
+    }
+
+    #[test]
+    fn test_bury() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x81, 0x02], // pushint 2
+            vec![0x81, 0x03], // pushint 3
+            vec![0x81, 0x04], // pushint 4
+            vec![0x81, 0x05], // pushint 5
+            vec![0x45, 0x04], // bury 4
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(4, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(4)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(3)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(5)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_bury_zero() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x81, 0x02], // pushint 2
+            vec![0x45, 0x00], // bury 0
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::InvalidStackAccess(), err);
+        Ok(())
+    }
+
+    #[test]
+    fn test_bury_outside_range() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x81, 0x02], // pushint 2
+            vec![0x45, 0x03], // bury 3
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::InvalidStackAccess(), err);
         Ok(())
     }
 
