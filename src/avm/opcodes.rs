@@ -857,18 +857,13 @@ fn op_dup(avm: &mut Avm) -> Result<(), AvmError> {
 }
 
 fn op_dup2(avm: &mut Avm) -> Result<(), AvmError> {
-    let b = avm.data_stack.pop();
-    let a = avm.data_stack.pop();
-    match (a, b) {
-        (Some(a), Some(b)) => {
-            avm.data_stack.push(a.clone());
-            avm.data_stack.push(b.clone());
-            avm.data_stack.push(a);
-            avm.data_stack.push(b);
-            Ok(())
-        }
-        _ => Err(AvmError::StackUnderflow),
-    }
+    let b = avm.pop_any()?;
+    let a = avm.pop_any()?;
+    avm.data_stack.push(a.clone());
+    avm.data_stack.push(b.clone());
+    avm.data_stack.push(a);
+    avm.data_stack.push(b);
+    Ok(())
 }
 
 fn op_concat(avm: &mut Avm) -> Result<(), AvmError> {
