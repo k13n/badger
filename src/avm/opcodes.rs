@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 57] = [
+pub const OP_SPECS: [OpSpec; 58] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -393,6 +393,13 @@ pub const OP_SPECS: [OpSpec; 57] = [
         version: AvmVersion::V3,
         cost: 1,
         eval: op_swap,
+    },
+    OpSpec {
+        opcode: 0x4d,
+        name: "select",
+        version: AvmVersion::V3,
+        cost: 1,
+        eval: op_select,
     },
     OpSpec {
         opcode: 0x50,
@@ -896,6 +903,18 @@ fn op_swap(avm: &mut Avm) -> Result<(), AvmError> {
     let a = avm.pop_any()?;
     avm.data_stack.push(b);
     avm.data_stack.push(a);
+    Ok(())
+}
+
+fn op_select(avm: &mut Avm) -> Result<(), AvmError> {
+    let c = avm.pop_uint64()?;
+    let b = avm.pop_any()?;
+    let a = avm.pop_any()?;
+    if c == 0 {
+        avm.data_stack.push(a);
+    } else {
+        avm.data_stack.push(b);
+    }
     Ok(())
 }
 
@@ -2326,6 +2345,42 @@ mod tests {
         let mut avm = Avm::for_program(&program)?;
         let err = execute_program(&mut avm).unwrap_err();
         assert_eq!(AvmError::StackUnderflow, err);
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_choose_first() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x81, 0x02], // pushint 2
+            vec![0x81, 0x00], // pushint 0
+            vec![0x4d],       // select
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_choose_second() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x81, 0x02], // pushint 2
+            vec![0x81, 0x01], // pushint 1
+            vec![0x4d],       // select
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(2)), avm.data_stack.pop());
         Ok(())
     }
 
