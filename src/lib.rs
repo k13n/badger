@@ -26,7 +26,7 @@ pub enum AvmError {
     #[error("Stack underflow")]
     StackUnderflow,
     #[error("Invalid stack access")]
-    InvalidStackAccess(),
+    InvalidStackAccess,
     #[error("Incompatible types (got {0}, expected {0})")]
     IncompatibleTypes(&'static str, &'static str),
     #[error("Byte slice exceeds length 4096")]

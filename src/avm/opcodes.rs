@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 55] = [
+pub const OP_SPECS: [OpSpec; 56] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -379,6 +379,13 @@ pub const OP_SPECS: [OpSpec; 55] = [
         version: AvmVersion::V2,
         cost: 1,
         eval: op_dup2,
+    },
+    OpSpec {
+        opcode: 0x4b,
+        name: "dig",
+        version: AvmVersion::V3,
+        cost: 1,
+        eval: op_dig,
     },
     OpSpec {
         opcode: 0x50,
@@ -810,7 +817,7 @@ fn op_bury(avm: &mut Avm) -> Result<(), AvmError> {
     let len = avm.data_stack.len();
     let offset = avm.read_byte()? as usize;
     if offset > len || offset == 0 {
-        Err(AvmError::InvalidStackAccess())
+        Err(AvmError::InvalidStackAccess)
     } else {
         avm.data_stack[len - offset] = avm.pop_any()?;
         Ok(())
@@ -864,6 +871,17 @@ fn op_dup2(avm: &mut Avm) -> Result<(), AvmError> {
     avm.data_stack.push(a);
     avm.data_stack.push(b);
     Ok(())
+}
+
+fn op_dig(avm: &mut Avm) -> Result<(), AvmError> {
+    let n = avm.read_byte()? as usize;
+    if n >= avm.data_stack.len() {
+        Err(AvmError::InvalidStackAccess)
+    } else {
+        let value = &avm.data_stack[avm.data_stack.len() - 1 - n];
+        avm.data_stack.push(value.clone());
+        Ok(())
+    }
 }
 
 fn op_concat(avm: &mut Avm) -> Result<(), AvmError> {
@@ -2075,7 +2093,7 @@ mod tests {
         .concat();
         let mut avm = Avm::for_program(&program)?;
         let err = execute_program(&mut avm).unwrap_err();
-        assert_eq!(AvmError::InvalidStackAccess(), err);
+        assert_eq!(AvmError::InvalidStackAccess, err);
         Ok(())
     }
 
@@ -2090,7 +2108,7 @@ mod tests {
         .concat();
         let mut avm = Avm::for_program(&program)?;
         let err = execute_program(&mut avm).unwrap_err();
-        assert_eq!(AvmError::InvalidStackAccess(), err);
+        assert_eq!(AvmError::InvalidStackAccess, err);
         Ok(())
     }
 
@@ -2202,6 +2220,65 @@ mod tests {
         let mut avm = Avm::for_program(&program)?;
         let err = execute_program(&mut avm).unwrap_err();
         assert_eq!(AvmError::StackUnderflow, err);
+        Ok(())
+    }
+
+    #[test]
+    fn test_dig() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x81, 0x02], // pushint 2
+            vec![0x81, 0x03], // pushint 3
+            vec![0x81, 0x04], // pushint 4
+            vec![0x81, 0x05], // pushint 5
+            vec![0x4b, 0x03], // dig 3
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(6, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(2)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(5)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(4)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(3)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(2)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_dig_zero() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x81, 0x02], // pushint 2
+            vec![0x4b, 0x00], // dig 0
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(3, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(2)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(2)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_dig_outside_range() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x81, 0x02], // pushint 2
+            vec![0x4b, 0x02], // dig 2
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::InvalidStackAccess, err);
         Ok(())
     }
 
