@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 56] = [
+pub const OP_SPECS: [OpSpec; 57] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -386,6 +386,13 @@ pub const OP_SPECS: [OpSpec; 56] = [
         version: AvmVersion::V3,
         cost: 1,
         eval: op_dig,
+    },
+    OpSpec {
+        opcode: 0x4c,
+        name: "swap",
+        version: AvmVersion::V3,
+        cost: 1,
+        eval: op_swap,
     },
     OpSpec {
         opcode: 0x50,
@@ -882,6 +889,14 @@ fn op_dig(avm: &mut Avm) -> Result<(), AvmError> {
         avm.data_stack.push(value.clone());
         Ok(())
     }
+}
+
+fn op_swap(avm: &mut Avm) -> Result<(), AvmError> {
+    let b = avm.pop_any()?;
+    let a = avm.pop_any()?;
+    avm.data_stack.push(b);
+    avm.data_stack.push(a);
+    Ok(())
 }
 
 fn op_concat(avm: &mut Avm) -> Result<(), AvmError> {
@@ -2279,6 +2294,38 @@ mod tests {
         let mut avm = Avm::for_program(&program)?;
         let err = execute_program(&mut avm).unwrap_err();
         assert_eq!(AvmError::InvalidStackAccess, err);
+        Ok(())
+    }
+
+    #[test]
+    fn test_swap() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x81, 0x02], // pushint 2
+            vec![0x4c],       // swap
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(2, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(2)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_swap_with_too_few_elements() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x4c],       // swap
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::StackUnderflow, err);
         Ok(())
     }
 
