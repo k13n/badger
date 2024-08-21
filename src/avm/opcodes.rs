@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 58] = [
+pub const OP_SPECS: [OpSpec; 59] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -400,6 +400,13 @@ pub const OP_SPECS: [OpSpec; 58] = [
         version: AvmVersion::V3,
         cost: 1,
         eval: op_select,
+    },
+    OpSpec {
+        opcode: 0x4e,
+        name: "cover",
+        version: AvmVersion::V5,
+        cost: 1,
+        eval: op_cover,
     },
     OpSpec {
         opcode: 0x50,
@@ -916,6 +923,18 @@ fn op_select(avm: &mut Avm) -> Result<(), AvmError> {
         avm.data_stack.push(b);
     }
     Ok(())
+}
+
+fn op_cover(avm: &mut Avm) -> Result<(), AvmError> {
+    let value = avm.pop_any()?;
+    let depth = avm.read_byte()? as usize;
+    if depth <= avm.data_stack.len() {
+        let pos = avm.data_stack.len() - depth;
+        avm.data_stack.insert(pos, value);
+        Ok(())
+    } else {
+        Err(AvmError::InvalidStackAccess)
+    }
 }
 
 fn op_concat(avm: &mut Avm) -> Result<(), AvmError> {
@@ -2381,6 +2400,50 @@ mod tests {
 
         assert_eq!(1, avm.data_stack.len());
         assert_eq!(Some(AvmData::Uint64(2)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_cover_at_bottom() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x81, 0x02], // pushint 2
+            vec![0x81, 0x03], // pushint 3
+            vec![0x81, 0x04], // pushint 4
+            vec![0x4e, 0x03], // cover 3
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(4, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(3)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(2)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(4)), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_cover_at_top() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],       // #pragma version 10
+            vec![0x81, 0x01], // pushint 1
+            vec![0x81, 0x02], // pushint 2
+            vec![0x81, 0x03], // pushint 3
+            vec![0x81, 0x04], // pushint 4
+            vec![0x4e, 0x00], // cover 0
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(4, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Uint64(4)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(3)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(2)), avm.data_stack.pop());
+        assert_eq!(Some(AvmData::Uint64(1)), avm.data_stack.pop());
         Ok(())
     }
 
