@@ -43,4 +43,6 @@ pub enum AvmError {
     ScratchAccessOutOfBounds(usize),
     #[error("Assertion failed at program counter {0}")]
     AssertionFailed(usize),
+    #[error("Impossible to access substring from positions {0} to {1} (length {2})")]
+    InvalidSubstringAccess(usize, usize, usize),
 }

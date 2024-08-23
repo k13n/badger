@@ -15,7 +15,7 @@ pub struct OpSpec {
     pub version: AvmVersion,
 }
 
-pub const OP_SPECS: [OpSpec; 60] = [
+pub const OP_SPECS: [OpSpec; 62] = [
     OpSpec {
         opcode: 0x00,
         name: "err",
@@ -421,6 +421,20 @@ pub const OP_SPECS: [OpSpec; 60] = [
         version: AvmVersion::V2,
         cost: 1,
         eval: op_concat,
+    },
+    OpSpec {
+        opcode: 0x51,
+        name: "substring",
+        version: AvmVersion::V2,
+        cost: 1,
+        eval: op_substring,
+    },
+    OpSpec {
+        opcode: 0x52,
+        name: "substring3",
+        version: AvmVersion::V2,
+        cost: 1,
+        eval: op_substring3,
     },
     OpSpec {
         opcode: 0x80,
@@ -933,10 +947,10 @@ fn op_select(avm: &mut Avm) -> Result<(), AvmError> {
 }
 
 fn op_cover(avm: &mut Avm) -> Result<(), AvmError> {
-    let value = avm.pop_any()?;
     let depth = avm.read_byte()? as usize;
-    if depth <= avm.data_stack.len() {
-        let pos = avm.data_stack.len() - depth;
+    if depth < avm.data_stack.len() {
+        let pos = avm.data_stack.len() - 1 - depth;
+        let value = avm.pop_any()?;
         avm.data_stack.insert(pos, value);
         Ok(())
     } else {
@@ -963,6 +977,30 @@ fn op_concat(avm: &mut Avm) -> Result<(), AvmError> {
         Err(AvmError::BytesTooLong)
     } else {
         avm.data_stack.push([lhs, rhs].concat().into());
+        Ok(())
+    }
+}
+
+fn op_substring(avm: &mut Avm) -> Result<(), AvmError> {
+    let bytes = avm.pop_bytes()?;
+    let start = avm.read_byte()? as usize;
+    let end = avm.read_byte()? as usize;
+    substring(avm, &bytes, start, end)
+}
+
+fn op_substring3(avm: &mut Avm) -> Result<(), AvmError> {
+    let end = avm.pop_uint64()? as usize;
+    let start = avm.pop_uint64()? as usize;
+    let bytes = avm.pop_bytes()?;
+    substring(avm, &bytes, start, end)
+}
+
+fn substring(avm: &mut Avm, bytes: &[u8], start: usize, end: usize) -> Result<(), AvmError> {
+    if end < start || end > bytes.len() {
+        Err(AvmError::InvalidSubstringAccess(start, end, bytes.len()))
+    } else {
+        let substring = bytes[start..end].to_vec();
+        avm.data_stack.push(AvmData::Bytes(substring));
         Ok(())
     }
 }
@@ -2533,6 +2571,87 @@ mod tests {
         let mut avm = Avm::for_program(&program)?;
         let err = execute_program(&mut avm).unwrap_err();
         assert_eq!(AvmError::InvalidStackAccess, err);
+        Ok(())
+    }
+
+    #[test]
+    fn test_substring() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],                               // #pragma version 10
+            vec![0x80, 0x04, 0xde, 0xad, 0xbe, 0xef], // pushbytes 0xdeadbeef
+            vec![0x51, 0x01, 0x04],                   // substring 1 4
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(
+            Some(AvmData::Bytes(vec![0xad, 0xbe, 0xef])),
+            avm.data_stack.pop()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_substring_empty() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],                               // #pragma version 10
+            vec![0x80, 0x04, 0xde, 0xad, 0xbe, 0xef], // pushbytes 0xdeadbeef
+            vec![0x51, 0x00, 0x00],                   // substring 0 0
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Bytes(vec![])), avm.data_stack.pop());
+        Ok(())
+    }
+
+    #[test]
+    fn test_substring_outside_range() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],                               // #pragma version 10
+            vec![0x80, 0x04, 0xde, 0xad, 0xbe, 0xef], // pushbytes 0xdeadbeef
+            vec![0x51, 0x01, 0x05],                   // substring 1 5
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::InvalidSubstringAccess(1, 5, 4), err);
+        Ok(())
+    }
+
+    #[test]
+    fn test_substring_end_before_start() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],                               // #pragma version 10
+            vec![0x80, 0x04, 0xde, 0xad, 0xbe, 0xef], // pushbytes 0xdeadbeef
+            vec![0x51, 0x03, 0x02],                   // substring 3 2
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let err = execute_program(&mut avm).unwrap_err();
+        assert_eq!(AvmError::InvalidSubstringAccess(3, 2, 4), err);
+        Ok(())
+    }
+
+    #[test]
+    fn test_substring3() -> Result<(), AvmError> {
+        let program = [
+            vec![0x0a],                               // #pragma version 10
+            vec![0x80, 0x04, 0xde, 0xad, 0xbe, 0xef], // pushbytes 0xdeadbeef
+            vec![0x81, 0x01],                         // pushint 1
+            vec![0x81, 0x02],                         // pushint 2
+            vec![0x52],                               // substring3
+        ]
+        .concat();
+        let mut avm = Avm::for_program(&program)?;
+        let avm = execute_program(&mut avm)?;
+
+        assert_eq!(1, avm.data_stack.len());
+        assert_eq!(Some(AvmData::Bytes(vec![0xad])), avm.data_stack.pop());
         Ok(())
     }
 
